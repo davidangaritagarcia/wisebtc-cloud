@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WiseBTC Cloud</title>
+
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0f1115;
+      color: #e8eaed;
+    }
+
+    .wrap {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      font-size: 28px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+      align-items: center;
+    }
+
+    select, button, input {
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #2d3440;
+      background: #171b22;
+      color: #e8eaed;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .card {
+      background: #171b22;
+      border: 1px solid #2d3440;
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    #chart {
+      width: 100%;
+      height: 650px;
+    }
+
+    .status {
+      margin-top: 12px;
+      color: #9aa4b2;
+      font-size: 14px;
+      white-space: pre-wrap;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>WiseBTC Cloud · Candlestick Viewer</h1>
+
+    <div class="toolbar">
+      <label>
+        Symbol
+        <input id="symbol" value="BTCUSDT" />
+      </label>
+
+      <label>
+        Interval
+        <select id="interval">
+          <option value="1m">1m</option>
+          <option value="5m">5m</option>
+          <option value="15m">15m</option>
+          <option value="1h">1h</option>
+          <option value="4h">4h</option>
+          <option value="1d">1d</option>
+        </select>
+      </label>
+
+      <label>
+        Limit
+        <select id="limit">
+          <option value="200">200</option>
+          <option value="500" selected>500</option>
+          <option value="1000">1000</option>
+        </select>
+      </label>
+
+      <button id="loadBtn">Load Chart</button>
+    </div>
+
+    <div class="card">
+      <div id="chart"></div>
+      <div class="status" id="status">Starting...</div>
+    </div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const chartContainer = document.getElementById("chart");
+    const COLOMBIA_TZ = "America/Bogota";
+
+    function setStatus(message) {
+      console.log(message);
+      statusEl.textContent = message;
+    }
+
+    function formatBogotaDateTime(unixSeconds) {
+      return new Intl.DateTimeFormat("en-GB", {
+        timeZone: COLOMBIA_TZ,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(new Date(unixSeconds * 1000));
+    }
+
+    function formatBogotaTick(unixSeconds) {
+      return new Intl.DateTimeFormat("en-GB", {
+        timeZone: COLOMBIA_TZ,
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(new Date(unixSeconds * 1000));
+    }
+
+    let chart;
+    let candleSeries;
+
+    try {
+      chart = LightweightCharts.createChart(chartContainer, {
+        width: chartContainer.clientWidth || 1200,
+        height: 650,
+        layout: {
+          background: { color: "#171b22" },
+          textColor: "#e8eaed",
+        },
+        grid: {
+          vertLines: { color: "#222833" },
+          horzLines: { color: "#222833" },
+        },
+        localization: {
+          timeFormatter: (time) => formatBogotaDateTime(time),
+        },
+        timeScale: {
+          timeVisible: true,
+          secondsVisible: false,
+          tickMarkFormatter: (time) => formatBogotaTick(time),
+        },
+        rightPriceScale: {
+          borderColor: "#2d3440",
+        },
+      });
+
+      candleSeries = chart.addCandlestickSeries();
+      setStatus("Chart initialized. Timezone: America/Bogota");
+    } catch (err) {
+      setStatus("Chart init error: " + err.message);
+      throw err;
+    }
+
+    async function loadChart() {
+      const symbol = document.getElementById("symbol").value.trim().toUpperCase();
+      const interval = document.getElementById("interval").value;
+      const limit = document.getElementById("limit").value;
+
+      setStatus(`Loading ${symbol} ${interval} limit=${limit} ... timezone=${COLOMBIA_TZ}`);
+
+      try {
+        const response = await fetch(`/api/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.detail || "Unknown API error");
+        }
+
+        if (!payload.candles || !Array.isArray(payload.candles)) {
+          throw new Error("API response has no candles array");
+        }
+
+        const candles = payload.candles.map(c => ({
+          time: Math.floor(Number(c.open_time) / 1000),
+          open: Number(c.open),
+          high: Number(c.high),
+          low: Number(c.low),
+          close: Number(c.close),
+        }));
+
+        if (candles.length === 0) {
+          throw new Error("No candles returned");
+        }
+
+        candleSeries.setData(candles);
+        chart.timeScale().fitContent();
+
+        setStatus(
+          `Loaded OK: ${payload.count} candles | ${payload.symbol} | ${payload.interval} | TZ=${COLOMBIA_TZ}\n` +
+          `First candle: ${formatBogotaDateTime(candles[0].time)}\n` +
+          `Last candle: ${formatBogotaDateTime(candles[candles.length - 1].time)}`
+        );
+      } catch (error) {
+        setStatus("Load error: " + error.message);
+      }
+    }
+
+    document.getElementById("loadBtn").addEventListener("click", loadChart);
+
+    window.addEventListener("resize", () => {
+      if (chart) {
+        chart.applyOptions({ width: chartContainer.clientWidth || 1200 });
+      }
+    });
+
+    loadChart();
+  </script>
+</body>
+</html>
